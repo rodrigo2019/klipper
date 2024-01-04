@@ -21,8 +21,14 @@ class PIDCalibrate:
     cmd_PID_CALIBRATE_help = "Run PID calibration test"
 
     def _calibrate(
-        self, pheaters, heater, target, tolerance, fname, gcmd,
-            calibrate_secondary
+        self,
+        pheaters,
+        heater,
+        target,
+        tolerance,
+        fname,
+        gcmd,
+        calibrate_secondary,
     ):
         if (
             isinstance(heater.control, heaters.ControlDualLoopPID)
@@ -48,9 +54,7 @@ class PIDCalibrate:
                 calibrate_secondary=calibrate_secondary,
             )
         else:
-            calibrate = ControlAutoTune(heater,
-                                        target,
-                                        tolerance)
+            calibrate = ControlAutoTune(heater, target, tolerance)
 
         old_control = heater.set_control(calibrate)
         try:
@@ -84,7 +88,13 @@ class PIDCalibrate:
         if isinstance(heater.control, heaters.ControlDualLoopPID):
             fname = "/tmp/heattest_secondary.txt" if write_file else None
             kp_s, ki_s, kd_s, _ = self._calibrate(
-                pheaters, heater, target, tolerance, fname, gcmd, calibrate_secondary=True
+                pheaters,
+                heater,
+                target,
+                tolerance,
+                fname,
+                gcmd,
+                calibrate_secondary=True,
             )
             old_kp = heater.control.secondary_pid.Kp
             old_ki = heater.control.secondary_pid.Ki
@@ -95,7 +105,13 @@ class PIDCalibrate:
             fname = "/tmp/heattest_primary.txt" if write_file else None
 
             kp_p, ki_p, kd_p, _ = self._calibrate(
-                pheaters, heater, target, tolerance, fname, gcmd, calibrate_secondary=False
+                pheaters,
+                heater,
+                target,
+                tolerance,
+                fname,
+                gcmd,
+                calibrate_secondary=False,
             )
 
             heater.control.secondary_pid.kp = old_kp
@@ -122,7 +138,13 @@ class PIDCalibrate:
         else:
             fname = "/tmp/heattest.txt" if write_file else None
             Kp, Ki, Kd, old_control = self._calibrate(
-                pheaters, heater, target, tolerance, fname, gcmd, calibrate_secondary=False
+                pheaters,
+                heater,
+                target,
+                tolerance,
+                fname,
+                gcmd,
+                calibrate_secondary=False,
             )
             logging.info("Autotune: final: Kp=%f Ki=%f Kd=%f", Kp, Ki, Kd)
             gcmd.respond_info(
@@ -138,6 +160,7 @@ class PIDCalibrate:
             configfile.set(heater_name, "pid_Ki", "%.3f" % (Ki,))
             configfile.set(heater_name, "pid_Kd", "%.3f" % (Kd,))
 
+
 TUNE_PID_DELTA = 5.0
 TUNE_PID_TOL = 0.02
 TUNE_PID_SAMPLES = 3
@@ -145,7 +168,9 @@ TUNE_PID_MAX_PEAKS = 60
 
 
 class ControlAutoTune:
-    def __init__(self, heater, target, tolerance, control=None, calibrate_secondary=False):
+    def __init__(
+        self, heater, target, tolerance, control=None, calibrate_secondary=False
+    ):
         self.heater = heater
         self.heater_max_power = heater.get_max_power()
         # store the reference so we can push messages if needed
@@ -185,8 +210,9 @@ class ControlAutoTune:
         self._control = control
         self._calibrate_secondary = calibrate_secondary
 
-    def temperature_update(self, read_time, primary_temp, target_temp,
-                           secondary_temp=None):
+    def temperature_update(
+        self, read_time, primary_temp, target_temp, secondary_temp=None
+    ):
 
         if self._calibrate_secondary:
             ref_temp = secondary_temp
@@ -201,7 +227,11 @@ class ControlAutoTune:
             (read_time, ref_temp, self.heater.last_pwm_value, self.target)
         )
         # ensure the starting temp is low enough to run the test.
-        if not self.started and ref_temp >= self.temp_low and self._control is None:
+        if (
+            not self.started
+            and ref_temp >= self.temp_low
+            and self._control is None
+        ):
             self.errored = True
             self.finish(read_time)
             self.gcode.respond_info("temperature to high to start calibration")
@@ -253,8 +283,10 @@ class ControlAutoTune:
             if self._control is not None and not self._calibrate_secondary:
                 pid = self._control.secondary_pid
                 sec_target = self._control.sec_max_temp_target
-                _, bounded_co = pid.calculate_output(read_time, secondary_temp,
-                                                     sec_target)
+                _, bounded_co = pid.calculate_output(
+                    read_time, secondary_temp, sec_target
+                )
+                bounded_co = min(bounded_co, self.powers[-1])
                 self.heater.set_pwm(read_time, bounded_co)
             else:
                 self.heater.set_pwm(read_time, self.powers[-1])
