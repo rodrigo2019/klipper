@@ -10,14 +10,64 @@ from . import heaters
 class PIDCalibrate:
     def __init__(self, config):
         self.printer = config.get_printer()
-        gcode = self.printer.lookup_object("gcode")
-        gcode.register_command(
+
+        self.gcode = self.printer.lookup_object("gcode")
+        self.gcode.register_command(
             "PID_CALIBRATE",
             self.cmd_PID_CALIBRATE,
             desc=self.cmd_PID_CALIBRATE_help,
         )
 
     cmd_PID_CALIBRATE_help = "Run PID calibration test"
+
+    def _calibrate(
+        self, pheaters, heater, target, tolerance, fname, gcmd,
+            calibrate_secondary
+    ):
+        if (
+            isinstance(heater.control, heaters.ControlDualLoopPID)
+            and calibrate_secondary
+        ):
+            sec_target = heater.control.sec_max_temp_target
+            calibrate = ControlAutoTune(
+                heater,
+                sec_target,
+                tolerance,
+                heater.control,
+                calibrate_secondary=calibrate_secondary,
+            )
+        elif (
+            isinstance(heater.control, heaters.ControlDualLoopPID)
+            and not calibrate_secondary
+        ):
+            calibrate = ControlAutoTune(
+                heater,
+                target,
+                tolerance,
+                heater.control,
+                calibrate_secondary=calibrate_secondary,
+            )
+        else:
+            calibrate = ControlAutoTune(heater,
+                                        target,
+                                        tolerance)
+
+        old_control = heater.set_control(calibrate)
+        try:
+            pheaters.set_temperature(heater, target, True)
+        except self.printer.command_error as e:
+            heater.set_control(old_control)
+            raise
+
+        heater.set_control(old_control)
+        if fname is not None:
+            calibrate.write_file(fname)
+        if calibrate.check_busy(0.0, 0.0, 0.0):
+            raise gcmd.error("pid_calibrate interrupted")
+        # Log and report results
+        kp, ki, kd = calibrate.calc_pid()
+
+        return kp, ki, kd, old_control
 
     def cmd_PID_CALIBRATE(self, gcmd):
         heater_name = gcmd.get("HEATER")
@@ -30,34 +80,63 @@ class PIDCalibrate:
         except self.printer.config_error as e:
             raise gcmd.error(str(e))
         self.printer.lookup_object("toolhead").get_last_move_time()
-        calibrate = ControlAutoTune(heater, target, tolerance)
-        old_control = heater.set_control(calibrate)
-        try:
-            pheaters.set_temperature(heater, target, True)
-        except self.printer.command_error as e:
-            heater.set_control(old_control)
-            raise
-        heater.set_control(old_control)
-        if write_file:
-            calibrate.write_file("/tmp/heattest.csv")
-        if calibrate.check_busy(0.0, 0.0, 0.0):
-            raise gcmd.error("pid_calibrate interrupted")
-        # Log and report results
-        Kp, Ki, Kd = calibrate.calc_pid()
-        logging.info("Autotune: final: Kp=%f Ki=%f Kd=%f", Kp, Ki, Kd)
-        gcmd.respond_info(
-            "PID parameters: pid_Kp=%.3f pid_Ki=%.3f pid_Kd=%.3f\n"
-            "The SAVE_CONFIG command will update the printer config file\n"
-            "with these parameters and restart the printer." % (Kp, Ki, Kd)
-        )
-        # Store results for SAVE_CONFIG
-        configfile = self.printer.lookup_object("configfile")
-        control = "pid_v" if old_control.get_type() == "pid_v" else "pid"
-        configfile.set(heater_name, "control", control)
-        configfile.set(heater_name, "pid_Kp", "%.3f" % (Kp,))
-        configfile.set(heater_name, "pid_Ki", "%.3f" % (Ki,))
-        configfile.set(heater_name, "pid_Kd", "%.3f" % (Kd,))
 
+        if isinstance(heater.control, heaters.ControlDualLoopPID):
+            fname = "/tmp/heattest_secondary.txt" if write_file else None
+            kp_s, ki_s, kd_s, _ = self._calibrate(
+                pheaters, heater, target, tolerance, fname, gcmd, calibrate_secondary=True
+            )
+            old_kp = heater.control.secondary_pid.Kp
+            old_ki = heater.control.secondary_pid.Ki
+            old_kd = heater.control.secondary_pid.Kd
+            heater.control.secondary_pid.kp = kp_s
+            heater.control.secondary_pid.ki = ki_s
+            heater.control.secondary_pid.kd = kd_s
+            fname = "/tmp/heattest_primary.txt" if write_file else None
+
+            kp_p, ki_p, kd_p, _ = self._calibrate(
+                pheaters, heater, target, tolerance, fname, gcmd, calibrate_secondary=False
+            )
+
+            heater.control.secondary_pid.kp = old_kp
+            heater.control.secondary_pid.ki = old_ki
+            heater.control.secondary_pid.kd = old_kd
+            gcmd.respond_info(
+                "PID parameters: primary_pid_Kp=%.3f primary_pid_Ki=%.3f"
+                "primary_pid_Kd=%.3f\n"
+                "secondary_pid_Kp=%.3f secondary_pid_Ki=%.3f"
+                "secondary_pid_Kd=%.3f\n"
+                "The SAVE_CONFIG command will update the printer config file\n"
+                "with these parameters and restart the printer."
+                % (kp_p, ki_p, kd_p, kp_s, ki_s, kd_s)
+            )
+            # Store results for SAVE_CONFIG
+            configfile = self.printer.lookup_object("configfile")
+            configfile.set(heater_name, "control", "dual_loop_pid")
+            configfile.set(heater_name, "primary_pid_Kp", "%.3f" % (kp_p,))
+            configfile.set(heater_name, "primary_pid_Ki", "%.3f" % (ki_p,))
+            configfile.set(heater_name, "primary_pid_Kd", "%.3f" % (kd_p,))
+            configfile.set(heater_name, "secondary_pid_Kp", "%.3f" % (kp_s,))
+            configfile.set(heater_name, "secondary_pid_Ki", "%.3f" % (ki_s,))
+            configfile.set(heater_name, "secondary_pid_Kd", "%.3f" % (kd_s,))
+        else:
+            fname = "/tmp/heattest.txt" if write_file else None
+            Kp, Ki, Kd, old_control = self._calibrate(
+                pheaters, heater, target, tolerance, fname, gcmd, calibrate_secondary=False
+            )
+            logging.info("Autotune: final: Kp=%f Ki=%f Kd=%f", Kp, Ki, Kd)
+            gcmd.respond_info(
+                "PID parameters: pid_Kp=%.3f pid_Ki=%.3f pid_Kd=%.3f\n"
+                "The SAVE_CONFIG command will update the printer config file\n"
+                "with these parameters and restart the printer." % (Kp, Ki, Kd)
+            )
+            # Store results for SAVE_CONFIG
+            configfile = self.printer.lookup_object("configfile")
+            control = "pid_v" if old_control.get_type() == "pid_v" else "pid"
+            configfile.set(heater_name, "control", control)
+            configfile.set(heater_name, "pid_Kp", "%.3f" % (Kp,))
+            configfile.set(heater_name, "pid_Ki", "%.3f" % (Ki,))
+            configfile.set(heater_name, "pid_Kd", "%.3f" % (Kd,))
 
 TUNE_PID_DELTA = 5.0
 TUNE_PID_TOL = 0.02
@@ -66,7 +145,7 @@ TUNE_PID_MAX_PEAKS = 60
 
 
 class ControlAutoTune:
-    def __init__(self, heater, target, tolerance):
+    def __init__(self, heater, target, tolerance, control=None, calibrate_secondary=False):
         self.heater = heater
         self.heater_max_power = heater.get_max_power()
         # store the reference so we can push messages if needed
@@ -102,17 +181,27 @@ class ControlAutoTune:
         self.errored = False
         # data from the test that can be optionally written to a file
         self.data = []
+        # Control for Dual loop pid
+        self._control = control
+        self._calibrate_secondary = calibrate_secondary
 
-    def temperature_update(self, read_time, temp, target_temp):
+    def temperature_update(self, read_time, primary_temp, target_temp,
+                           secondary_temp=None):
+
+        if self._calibrate_secondary:
+            ref_temp = secondary_temp
+        else:
+            ref_temp = primary_temp
+
         # tuning is done, so don't do any more calculations
         if self.done:
             return
         # store test data
         self.data.append(
-            (read_time, temp, self.heater.last_pwm_value, self.target)
+            (read_time, ref_temp, self.heater.last_pwm_value, self.target)
         )
         # ensure the starting temp is low enough to run the test.
-        if not self.started and temp >= self.temp_low:
+        if not self.started and ref_temp >= self.temp_low and self._control is None:
             self.errored = True
             self.finish(read_time)
             self.gcode.respond_info("temperature to high to start calibration")
@@ -126,18 +215,18 @@ class ControlAutoTune:
             self.gcode.respond_info("calibration did not finish in time")
             return
         # indicate that the target temp has been crossed at-least once
-        if temp > self.target and self.target_crossed is False:
+        if ref_temp > self.target and self.target_crossed is False:
             self.target_crossed = True
         # only do work if the target temp has been crossed at-least once
         if self.target_crossed:
             # check for a new peak value
-            if temp > self.temp_high or temp < self.temp_low:
-                self.check_peak(read_time, temp)
+            if ref_temp > self.temp_high or ref_temp < self.temp_low:
+                self.check_peak(read_time, ref_temp)
             # it's time to calculate and store a high peak
-            if self.peak > self.temp_high and temp < self.target:
+            if self.peak > self.temp_high and ref_temp < self.target:
                 self.store_peak()
             # it's time to calculate and store a low peak
-            if self.peak < self.temp_low and temp > self.target:
+            if self.peak < self.temp_low and ref_temp > self.target:
                 self.store_peak()
             # check if the conditions are right to evaluate a new sample
             peaks = float(len(self.peaks)) - 1.0
@@ -150,18 +239,25 @@ class ControlAutoTune:
                     return
                 self.set_power()
         # turn the heater off
-        if self.heating and temp >= self.temp_high:
+        if self.heating and ref_temp >= self.temp_high:
             self.heating = False
             self.times.append(read_time)
             self.heater.alter_target(self.temp_low)
         # turn the heater on
-        if not self.heating and temp <= self.temp_low:
+        if not self.heating and ref_temp <= self.temp_low:
             self.heating = True
             self.times.append(read_time)
             self.heater.alter_target(self.temp_high)
         # set the pwm output based on the heater state
         if self.heating:
-            self.heater.set_pwm(read_time, self.powers[-1])
+            if self._control is not None and not self._calibrate_secondary:
+                pid = self._control.secondary_pid
+                sec_target = self._control.sec_max_temp_target
+                _, bounded_co = pid.calculate_output(read_time, secondary_temp,
+                                                     sec_target)
+                self.heater.set_pwm(read_time, bounded_co)
+            else:
+                self.heater.set_pwm(read_time, self.powers[-1])
         else:
             self.heater.set_pwm(read_time, 0)
 
