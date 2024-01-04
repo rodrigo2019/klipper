@@ -11,6 +11,7 @@ Our goal is to support features and behavior that could be "risky" if used incor
 If I want my printer to light itself on fire, I should be able to make my printer light itself on fire.
 
 ## Features merged into the master branch:
+- [heater: Dual Loop PID](https://github.com/DangerKlippers/danger-klipper/issues/58) ([klipper#5972](https://github.com/Klipper3d/klipper/pull/5972))
 
 - [core: no Python2 tests; no PRU boards](https://github.com/DangerKlippers/danger-klipper/pull/39)
 
