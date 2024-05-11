@@ -53,6 +53,7 @@ class PIDCalibrate:
         except self.printer.config_error as e:
             raise gcmd.error(str(e))
         self.printer.lookup_object('toolhead').get_last_move_time()
+        cfgname = heater.get_name()
 
         if isinstance(heater.control, heaters.ControlDualLoopPID):
             fname = '/tmp/heattest_secondary.txt' if write_file else None
@@ -82,13 +83,13 @@ class PIDCalibrate:
                 % (kp_p, ki_p, kd_p, kp_s, ki_s, kd_s))
             # Store results for SAVE_CONFIG
             configfile = self.printer.lookup_object('configfile')
-            configfile.set(heater_name, 'control', 'dual_loop_pid')
-            configfile.set(heater_name, 'primary_pid_Kp', "%.3f" % (kp_p,))
-            configfile.set(heater_name, 'primary_pid_Ki', "%.3f" % (ki_p,))
-            configfile.set(heater_name, 'primary_pid_Kd', "%.3f" % (kd_p,))
-            configfile.set(heater_name, 'secondary_pid_Kp', "%.3f" % (kp_s,))
-            configfile.set(heater_name, 'secondary_pid_Ki', "%.3f" % (ki_s,))
-            configfile.set(heater_name, 'secondary_pid_Kd', "%.3f" % (kd_s,))
+            configfile.set(cfgname, 'control', 'dual_loop_pid')
+            configfile.set(cfgname, 'primary_pid_Kp', "%.3f" % (kp_p,))
+            configfile.set(cfgname, 'primary_pid_Ki', "%.3f" % (ki_p,))
+            configfile.set(cfgname, 'primary_pid_Kd', "%.3f" % (kd_p,))
+            configfile.set(cfgname, 'secondary_pid_Kp', "%.3f" % (kp_s,))
+            configfile.set(cfgname, 'secondary_pid_Ki', "%.3f" % (ki_s,))
+            configfile.set(cfgname, 'secondary_pid_Kd', "%.3f" % (kd_s,))
         else:
             fname = '/tmp/heattest.txt' if write_file else None
             Kp, Ki, Kd = self._calibrate(pheaters, heater, target, fname, gcmd,
@@ -100,10 +101,10 @@ class PIDCalibrate:
                 "with these parameters and restart the printer." % (Kp, Ki, Kd))
             # Store results for SAVE_CONFIG
             configfile = self.printer.lookup_object('configfile')
-            configfile.set(heater_name, 'control', 'pid')
-            configfile.set(heater_name, 'pid_Kp', "%.3f" % (Kp,))
-            configfile.set(heater_name, 'pid_Ki', "%.3f" % (Ki,))
-            configfile.set(heater_name, 'pid_Kd', "%.3f" % (Kd,))
+            configfile.set(cfgname, 'control', 'pid')
+            configfile.set(cfgname, 'pid_Kp', "%.3f" % (Kp,))
+            configfile.set(cfgname, 'pid_Ki', "%.3f" % (Ki,))
+            configfile.set(cfgname, 'pid_Kd', "%.3f" % (Kd,))
 
 TUNE_PID_DELTA = 5.0
 
